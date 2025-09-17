@@ -36,9 +36,9 @@
             transform: translateY(-1.25rem) scale(0.85);
             opacity: 0;
         }
-        #map { 
-            height: 400px; 
-            width: 100%; 
+        #map {
+            height: 400px;
+            width: 100%;
             border-radius: 1rem;
             box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
             margin-top: 1.5rem;
@@ -49,6 +49,20 @@
             height: 300px;
             margin-top: 2rem;
         }
+        /* Estilo para el icono de parada */
+        .stop-icon {
+            background-color: #e53e3e;
+            width: 1.5rem;
+            height: 1.5rem;
+            display: block;
+            border-radius: 50%;
+            border: 2px solid white;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+            text-align: center;
+            line-height: 1.5rem;
+            color: white;
+            font-weight: bold;
+        }
     </style>
 </head>
 <body class="bg-gray-200">
@@ -56,7 +70,7 @@
 <div class="container">
     <div class="flex flex-col items-center gap-4 mb-6">
         <img src="https://placehold.co/100x100/1e40af/ffffff?text=RyLi+SAC" alt="Logo de RyLi SAC" class="w-16 h-16 rounded-full shadow-lg">
-        <h1 class="text-3xl font-bold text-center text-gray-800">Análisis de Ruta</h1>
+        <h1 class="text-3xl font-bold text-center text-gray-800">Análisis de Rutas de transporte</h1>
         <p class="text-center text-gray-600">Ingresa los datos del GPS a continuación.</p>
     </div>
     
@@ -72,7 +86,7 @@ Ejemplo:
 
     <!-- Filtro de rango de fecha y hora -->
     <div class="mb-6">
-        <h3 class="text-lg font-bold text-gray-700 mb-2">Filtrar por rango (opcional)</h3>
+        <h3 class="text-lg font-bold text-gray-700 mb-2">Filtra por rango (opcional)</h3>
         <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div>
                 <label for="startDateFilter" class="block text-sm font-medium text-gray-700">Fecha de inicio</label>
@@ -92,6 +106,17 @@ Ejemplo:
             </div>
         </div>
     </div>
+    
+    <!-- Selección de Vehículo -->
+    <div class="mb-6">
+        <h3 class="text-lg font-bold text-gray-700 mb-2">Selecciona Tipo de Vehículo</h3>
+        <select id="vehicleType" class="w-full p-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all">
+            <option value="sedan">Automóvil (Sedán)</option>
+            <option value="suv">Camioneta (SUV)</option>
+            <option value="truck">Remolcador/Camión (Pesado)</option>
+            <option value="bus">Ómnibus (Interurbano)</option>
+        </select>
+    </div>
 
     <div class="flex flex-col md:flex-row gap-4 mb-8">
         <button onclick="analyzeData()" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-lg shadow-md transition-all text-lg">
@@ -106,7 +131,7 @@ Ejemplo:
             </button>
         </div>
     </div>
-
+    
     <div id="results" class="results-container">
         <div id="error" class="mt-4 text-center text-red-500 hidden">
             <p id="error-message">Hubo un error al procesar los datos. Asegúrate de que el formato sea correcto y que hayas ingresado al menos dos puntos para cada día.</p>
@@ -115,11 +140,32 @@ Ejemplo:
 </div>
 
 <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<!-- FIX: Se han actualizado las librerías de Chart.js y sus adaptadores a las versiones más recientes y estables -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/date-fns@3.6.0/dist/date-fns.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+<!-- Nuevas librerías para zoom y anotaciones -->
+<script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
+
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script>
     let mapInstance = null;
+    let speedChartInstance = null;
+    let distanceChartInstance = null;
+
+    // Tasas de rendimiento de combustible en km por galón
+    const VEHICLE_PERFORMANCE_RATES_KM_PER_GALLON = {
+        sedan: 37.85,  // 10 km/litro -> 37.85 km/galón
+        suv: 30.28,    // 8 km/litro -> 30.28 km/galón
+        truck: 11.35,  // 3 km/litro -> 11.35 km/galón
+        bus: 3.33      // 1 km / 0.3 galones = 3.33 km/galón
+    };
+    const SOLES_PER_GALLON = 9.10;
+    const LITERS_PER_GALLON = 3.785;
+    const SPEED_LIMIT = 95; // Límite de velocidad en km/h
 
     // Helper function to format time from minutes to "X horas Y minutos"
     function formatTime(minutes) {
@@ -127,6 +173,14 @@ Ejemplo:
         const hours = Math.floor(minutes / 60);
         const remainingMinutes = Math.round(minutes % 60);
         return `${hours} horas ${remainingMinutes} minutos`;
+    }
+
+    // Helper function to format time from minutes to "X minutos Y segundos" for stops
+    function formatStopDuration(minutes) {
+        if (minutes < 0) return "0 minutos 0 segundos";
+        const min = Math.floor(minutes);
+        const seconds = Math.round((minutes - min) * 60);
+        return `${min} minutos y ${seconds} segundos`;
     }
 
     function toRadians(degrees) {
@@ -148,6 +202,17 @@ Ejemplo:
 
         return R * c;
     }
+    
+    // Función para calcular el consumo de combustible en galones y el costo total
+    function calculateFuelAndCost(distance, vehicleType) {
+        const kmPerGallon = VEHICLE_PERFORMANCE_RATES_KM_PER_GALLON[vehicleType];
+        if (!kmPerGallon || kmPerGallon === 0) return { gallons: 0, cost: 0 };
+        
+        const gallonsConsumed = distance / kmPerGallon;
+        const totalCost = gallonsConsumed * SOLES_PER_GALLON;
+        
+        return { gallons: gallonsConsumed, cost: totalCost };
+    }
 
     function analyzeData() {
         const input = document.getElementById('dataInput').value;
@@ -155,12 +220,25 @@ Ejemplo:
         const endDateFilter = document.getElementById('endDateFilter').value;
         const startTimeFilter = document.getElementById('startTimeFilter').value;
         const endTimeFilter = document.getElementById('endTimeFilter').value;
+        const vehicleType = document.getElementById('vehicleType').value;
         const resultsDiv = document.getElementById('results');
         const errorDiv = document.getElementById('error');
         const errorMessage = document.getElementById('error-message');
         
         resultsDiv.innerHTML = `<div id="error" class="mt-4 text-center text-red-500 hidden"><p id="error-message">Hubo un error al procesar los datos. Asegúrate de que el formato sea correcto y que hayas ingresado al menos dos puntos para cada día.</p></div>`;
         errorDiv.classList.add('hidden');
+
+        // VALIDACIÓN DE FECHA Y HORA
+        if ((startDateFilter && endDateFilter) || (startTimeFilter && endTimeFilter)) {
+            const startDateTime = new Date(`${startDateFilter || '1970-01-01'}T${startTimeFilter || '00:00'}:00`);
+            const endDateTime = new Date(`${endDateFilter || '2099-12-31'}T${endTimeFilter || '23:59'}:59`);
+
+            if (startDateTime > endDateTime) {
+                errorMessage.innerText = "La fecha y hora de inicio no pueden ser posteriores a la de fin.";
+                errorDiv.classList.remove('hidden');
+                return;
+            }
+        }
 
         let lines = input.trim().split('\n').filter(line => line.trim() !== '');
 
@@ -178,13 +256,7 @@ Ejemplo:
             const endDateTime = new Date(
                 (endDateFilter || '2099-12-31') + 'T' + (endTimeFilter || '23:59') + ':59'
             );
-
-            if (startDateTime > endDateTime) {
-                errorMessage.innerText = "La fecha y hora de inicio no pueden ser posteriores a la de fin.";
-                errorDiv.classList.remove('hidden');
-                return;
-            }
-
+            
             lines = lines.filter(line => {
                 const parts = line.split(/\s+/);
                 const rawDate = parts[0];
@@ -210,13 +282,13 @@ Ejemplo:
         let summaryTableContent = '';
         let eventsContent = '';
 
-        const SPEED_LIMIT = 96;
         const ACCELERATION_THRESHOLD = 20; // km/h por minuto
         const DECELERATION_THRESHOLD = -20; // km/h por minuto
         
         const allLatLngs = [];
         const speedData = [];
         const distanceData = [];
+        const stops = [];
         let accumulatedDistance = 0;
 
         try {
@@ -253,7 +325,13 @@ Ejemplo:
                 const timeParts = time.split(':');
                 const timestamp = new Date(dateParts[2], dateParts[1] - 1, dateParts[0], timeParts[0], timeParts[1], timeParts[2]).getTime();
                 
-                speedData.push({ x: timestamp, y: speed });
+                speedData.push({ 
+                    x: timestamp, 
+                    y: speed, 
+                    location: location, 
+                    date: date, 
+                    time: time 
+                });
             });
 
             for (const date in dataByDate) {
@@ -273,6 +351,11 @@ Ejemplo:
                 let harshAccelerationCount = 0;
                 let harshBrakingCount = 0;
                 
+                let isStopped = false;
+                let stopStartTime = null;
+                let stopStartLocation = null;
+                let stopStartLatLng = null;
+
                 eventsContent += `
                     <div class="mt-8">
                         <h3 class="text-xl font-bold text-gray-700 mb-2">Eventos detectados el ${date}</h3>
@@ -284,19 +367,32 @@ Ejemplo:
                     const next = dailyData[i + 1];
                     const timeDiff = (new Date(next.date.split('/')[2], next.date.split('/')[1] - 1, next.date.split('/')[0], next.time.split(':')[0], next.time.split(':')[1], next.time.split(':')[2]) - new Date(current.date.split('/')[2], current.date.split('/')[1] - 1, current.date.split('/')[0], current.time.split(':')[0], current.time.split(':')[1], current.time.split(':')[2])) / 1000 / 60; // en minutos
 
-                    // Lógica para determinar el tiempo detenido basada en la velocidad
+                    // Lógica para determinar el tiempo detenido y registrar paradas
                     if (current.speed === 0) {
                         totalStoppedTime += timeDiff;
+                        if (!isStopped) {
+                            isStopped = true;
+                            stopStartTime = new Date(current.date.split('/')[2], current.date.split('/')[1] - 1, current.date.split('/')[0], current.time.split(':')[0], current.time.split(':')[1], current.time.split(':')[2]);
+                            stopStartLocation = current.location;
+                            stopStartLatLng = [current.lat, current.lon];
+                        }
                     } else {
                         const segmentDistance = haversineDistance(current.lat, current.lon, next.lat, next.lon);
                         totalDistance += segmentDistance;
                         accumulatedDistance += segmentDistance;
                         totalMovingTime += timeDiff;
+
+                        if (isStopped) {
+                            isStopped = false;
+                            const stopEndTime = new Date(current.date.split('/')[2], current.date.split('/')[1] - 1, current.date.split('/')[0], current.time.split(':')[0], current.time.split(':')[1], current.time.split(':')[2]);
+                            const durationMinutes = (stopEndTime - stopStartTime) / 1000 / 60;
+                            stops.push({ lat: stopStartLatLng[0], lon: stopStartLatLng[1], date: current.date, time: current.time, duration: durationMinutes, location: stopStartLocation });
+                        }
                     }
 
                     if (current.speed > SPEED_LIMIT) {
                         excessiveSpeedCount++;
-                        eventsContent += `<li class="text-red-500">⚠ **Exceso de velocidad** (${current.speed} km/h) a las ${current.time} en ${current.location}</li>`;
+                        eventsContent += `<li class="text-red-500">⚠ <strong>Exceso de velocidad</strong> (${current.speed} km/h) a las ${current.time} en ${current.location}</li>`;
                     }
 
                     const speedChange = next.speed - current.speed;
@@ -304,10 +400,10 @@ Ejemplo:
                         const speedChangePerMinute = speedChange / timeDiff;
                         if (speedChangePerMinute > ACCELERATION_THRESHOLD) {
                             harshAccelerationCount++;
-                            eventsContent += `<li class="text-red-500">⚠ **Aceleración brusca** (cambio de ${speedChange.toFixed(2)} km/h) a las ${current.time}</li>`;
+                            eventsContent += `<li class="text-red-500">⚠ <strong>Aceleración brusca</strong> (cambio de ${speedChange.toFixed(2)} km/h) a las ${current.time}</li>`;
                         } else if (speedChangePerMinute < DECELERATION_THRESHOLD) {
                             harshBrakingCount++;
-                            eventsContent += `<li class="text-red-500">⚠ **Frenado brusco** (cambio de ${speedChange.toFixed(2)} km/h) a las ${current.time}</li>`;
+                            eventsContent += `<li class="text-red-500">⚠ <strong>Frenado brusco</strong> (cambio de ${speedChange.toFixed(2)} km/h) a las ${current.time}</li>`;
                         }
                     }
                     
@@ -315,7 +411,14 @@ Ejemplo:
                     const nextTimeParts = next.time.split(':');
                     const nextTimestamp = new Date(nextDateParts[2], nextDateParts[1] - 1, nextDateParts[0], nextTimeParts[0], nextTimeParts[1], nextTimeParts[2]).getTime();
 
-                    distanceData.push({ x: nextTimestamp, y: accumulatedDistance });
+                    distanceData.push({ x: nextTimestamp, y: accumulatedDistance, date: next.date, time: next.time });
+                }
+                
+                if (isStopped) {
+                    const lastPoint = dailyData[dailyData.length - 1];
+                    const stopEndTime = new Date(lastPoint.date.split('/')[2], lastPoint.date.split('/')[1] - 1, lastPoint.date.split('/')[0], lastPoint.time.split(':')[0], lastPoint.time.split(':')[1], lastPoint.time.split(':')[2]);
+                    const durationMinutes = (stopEndTime - stopStartTime) / 1000 / 60;
+                    stops.push({ lat: stopStartLatLng[0], lon: stopStartLatLng[1], date: lastPoint.date, time: lastPoint.time, duration: durationMinutes, location: stopStartLocation });
                 }
 
                 if (excessiveSpeedCount > 0 || harshAccelerationCount > 0 || harshBrakingCount > 0) {
@@ -349,6 +452,20 @@ Ejemplo:
                 return;
             }
             
+            // Calculo del consumo de combustible y el costo total
+            const { gallons, cost } = calculateFuelAndCost(grandTotalDistance, vehicleType);
+            const totalLiters = gallons * LITERS_PER_GALLON;
+
+            const firstPoint = lines[0].trim().split(/\s+/);
+            const firstPointDate = firstPoint[0];
+            const firstPointTime = firstPoint[1];
+            const firstPointLocation = firstPoint.slice(4, firstPoint.length - 2).join(' ');
+
+            const lastPoint = lines[lines.length - 1].trim().split(/\s+/);
+            const lastPointDate = lastPoint[0];
+            const lastPointTime = lastPoint[1];
+            const lastPointLocation = lastPoint.slice(4, lastPoint.length - 2).join(' ');
+            
             // Calculo del tiempo total de la ruta
             const grandTotalTripTime = grandTotalOperatingTime + grandTotalStoppedTime;
 
@@ -356,7 +473,7 @@ Ejemplo:
                 <div id="summary-section">
                     <div class="text-center mb-8 p-6 bg-blue-100 rounded-lg border border-blue-200 shadow-md">
                         <h2 class="text-xl font-extrabold text-blue-800 mb-2">Resumen General</h2>
-                        <div class="grid grid-cols-1 md:grid-cols-4 gap-4 text-left">
+                        <div class="grid grid-cols-1 md:grid-cols-6 gap-4 text-left">
                             <div class="bg-blue-200 p-4 rounded-lg shadow-inner">
                                 <p class="text-xs font-semibold text-blue-900">Recorrido Total</p>
                                 <p class="text-xl font-extrabold text-blue-600">${grandTotalDistance.toFixed(2)} km</p>
@@ -370,8 +487,35 @@ Ejemplo:
                                 <p class="text-xl font-extrabold text-blue-600">${formatTime(grandTotalStoppedTime)}</p>
                             </div>
                             <div class="bg-blue-200 p-4 rounded-lg shadow-inner">
-                                <p class="text-xs font-semibold text-blue-900">Tiempo Total de la Ruta</p>
-                                <p class="text-xl font-extrabold text-blue-600">${formatTime(grandTotalTripTime)}</p>
+                                <p class="text-xs font-semibold text-blue-900">Galones Consumidos</p>
+                                <p class="text-xl font-extrabold text-blue-600">${gallons.toFixed(2)} gal</p>
+                            </div>
+                            <div class="bg-blue-200 p-4 rounded-lg shadow-inner">
+                                <p class="text-xs font-semibold text-blue-900">Litros Consumidos</p>
+                                <p class="text-xl font-extrabold text-blue-600">${totalLiters.toFixed(2)} l</p>
+                            </div>
+                            <div class="bg-blue-200 p-4 rounded-lg shadow-inner">
+                                <p class="text-xs font-semibold text-blue-900">Costo Total</p>
+                                <p class="text-xl font-extrabold text-blue-600">S/. ${cost.toFixed(2)}</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Nueva sección para mostrar el inicio y el fin del recorrido -->
+                    <div class="mt-8">
+                        <h2 class="text-xl font-bold text-gray-700 mb-4 text-center">Detalles del Recorrido</h2>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div class="bg-white p-6 rounded-lg shadow-md border border-gray-200">
+                                <h3 class="text-lg font-bold text-gray-700 mb-2">Inicio del Recorrido</h3>
+                                <p class="text-gray-600"><span class="font-semibold">Fecha:</span> ${firstPointDate}</p>
+                                <p class="text-gray-600"><span class="font-semibold">Hora:</span> ${firstPointTime}</p>
+                                <p class="text-gray-600"><span class="font-semibold">Ubicación:</span> ${firstPointLocation}</p>
+                            </div>
+                            <div class="bg-white p-6 rounded-lg shadow-md border border-gray-200">
+                                <h3 class="text-lg font-bold text-gray-700 mb-2">Fin del Recorrido</h3>
+                                <p class="text-gray-600"><span class="font-semibold">Fecha:</span> ${lastPointDate}</p>
+                                <p class="text-gray-600"><span class="font-semibold">Hora:</span> ${lastPointTime}</p>
+                                <p class="text-gray-600"><span class="font-semibold">Ubicación:</span> ${lastPointLocation}</p>
                             </div>
                         </div>
                     </div>
@@ -401,12 +545,19 @@ Ejemplo:
 
                 <div id="visualizations-section">
                     <h2 class="text-xl font-bold text-gray-700 mt-8 mb-4 text-center">Visualizaciones de la Ruta</h2>
-                    <div id="map"></div>
                     
+                    <div class="flex justify-center mb-4">
+                        <button onclick="resetZoom()" class="bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded-lg shadow-md transition-all">
+                            Reiniciar Zoom
+                        </button>
+                    </div>
+
                     <div class="chart-container">
                         <canvas id="speedChart"></canvas>
                     </div>
 
+                    <div id="map"></div>
+                    
                     <div class="chart-container">
                         <canvas id="distanceChart"></canvas>
                     </div>
@@ -418,13 +569,17 @@ Ejemplo:
                 </div>
             `;
             
-            if (allLatLngs.length > 0) {
-              renderMap(allLatLngs);
-            }
-
-            if (speedData.length > 0 && distanceData.length > 0) {
-              renderCharts(speedData, distanceData);
-            }
+            // Añade un pequeño retraso para asegurar que el DOM se haya actualizado antes de renderizar los gráficos y el mapa.
+            setTimeout(() => {
+                if (allLatLngs.length > 0) {
+                  renderMap(allLatLngs);
+                  renderStopsOnMap(stops);
+                }
+                
+                if (speedData.length > 0 && distanceData.length > 0) {
+                  renderCharts(speedData, distanceData);
+                }
+            }, 0);
 
 
         } catch (e) {
@@ -453,6 +608,29 @@ Ejemplo:
         L.marker(latLngs[latLngs.length - 1]).addTo(mapInstance)
             .bindPopup('<b>Fin</b>').openPopup();
     }
+    
+    function renderStopsOnMap(stops) {
+        if (!mapInstance) return;
+
+        const stopIcon = L.divIcon({
+            className: 'stop-icon',
+            html: 'P',
+            iconSize: [24, 24],
+            iconAnchor: [12, 12]
+        });
+
+        stops.forEach(stop => {
+            const popupContent = `
+                <div class="font-bold">Parada</div>
+                <div>Fecha: ${stop.date}</div>
+                <div>Hora: ${stop.time}</div>
+                <div>Lugar: ${stop.location}</div>
+                <div>Duración: ${formatStopDuration(stop.duration)}</div>
+            `;
+            L.marker([stop.lat, stop.lon], {icon: stopIcon}).addTo(mapInstance)
+                .bindPopup(popupContent);
+        });
+    }
 
     function renderCharts(speedData, distanceData) {
         const speedCtx = document.getElementById('speedChart').getContext('2d');
@@ -462,16 +640,24 @@ Ejemplo:
         if (window.speedChartInstance) window.speedChartInstance.destroy();
         if (window.distanceChartInstance) window.distanceChartInstance.destroy();
 
+        // Data for speed chart, highlighting points above the speed limit
+        const speedDataWithHighlights = speedData.map(point => ({
+            ...point,
+            pointBackgroundColor: point.y > SPEED_LIMIT ? 'red' : '#1d4ed8',
+            pointRadius: point.y > SPEED_LIMIT ? 5 : 0
+        }));
+
         window.speedChartInstance = new Chart(speedCtx, {
             type: 'line',
             data: {
                 datasets: [{
                     label: 'Velocidad (km/h)',
-                    data: speedData,
+                    data: speedDataWithHighlights,
                     borderColor: '#1d4ed8',
                     backgroundColor: 'rgba(29, 78, 216, 0.1)',
                     tension: 0.1,
-                    pointRadius: 0
+                    pointHoverRadius: 7,
+                    pointHoverBackgroundColor: 'red',
                 }]
             },
             options: {
@@ -481,7 +667,8 @@ Ejemplo:
                     x: {
                         type: 'time',
                         time: {
-                            unit: 'minute'
+                            unit: 'minute',
+                            tooltipFormat: 'dd/MM/yyyy HH:mm:ss'
                         },
                         title: {
                             display: true,
@@ -492,6 +679,48 @@ Ejemplo:
                         title: {
                             display: true,
                             text: 'Velocidad (km/h)'
+                        }
+                    }
+                },
+                plugins: {
+                    // Configuración para el zoom
+                    zoom: {
+                        zoom: {
+                            wheel: { enabled: true },
+                            pinch: { enabled: true },
+                            mode: 'xy'
+                        },
+                        pan: {
+                            enabled: true,
+                            mode: 'xy'
+                        }
+                    },
+                    // Configuración para la línea de anotación
+                    annotation: {
+                        annotations: {
+                            line1: {
+                                type: 'line',
+                                yMin: SPEED_LIMIT,
+                                yMax: SPEED_LIMIT,
+                                borderColor: 'rgb(255, 99, 132)',
+                                borderWidth: 2,
+                                borderDash: [6, 6],
+                                label: {
+                                    content: 'Límite de velocidad',
+                                    enabled: true,
+                                    position: 'start',
+                                    backgroundColor: 'rgba(255, 99, 132, 0.8)',
+                                    color: 'white'
+                                }
+                            }
+                        }
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                const point = context.raw;
+                                return `Velocidad: ${point.y.toFixed(2)} km/h\nFecha: ${point.date}\nHora: ${point.time}\nLugar: ${point.location}`;
+                            }
                         }
                     }
                 }
@@ -507,7 +736,10 @@ Ejemplo:
                     borderColor: '#22c55e',
                     backgroundColor: 'rgba(34, 197, 94, 0.1)',
                     tension: 0.1,
-                    pointRadius: 0
+                    pointRadius: 5,
+                    pointBackgroundColor: '#22c55e',
+                    pointBorderColor: '#fff',
+                    pointBorderWidth: 2
                 }]
             },
             options: {
@@ -517,7 +749,8 @@ Ejemplo:
                     x: {
                         type: 'time',
                         time: {
-                            unit: 'minute'
+                            unit: 'minute',
+                            tooltipFormat: 'dd/MM/yyyy HH:mm:ss'
                         },
                         title: {
                             display: true,
@@ -530,15 +763,45 @@ Ejemplo:
                             text: 'Distancia (km)'
                         }
                     }
+                },
+                plugins: {
+                    zoom: {
+                        zoom: {
+                            wheel: { enabled: true },
+                            pinch: { enabled: true },
+                            mode: 'xy'
+                        },
+                        pan: {
+                            enabled: true,
+                            mode: 'xy'
+                        }
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                const point = context.raw;
+                                return `Distancia: ${point.y.toFixed(2)} km\nFecha: ${point.date}\nHora: ${point.time}`;
+                            }
+                        }
+                    }
                 }
             }
         });
     }
 
+    // Nueva función para reiniciar el zoom de ambos gráficos
+    function resetZoom() {
+        if (window.speedChartInstance) {
+            window.speedChartInstance.resetZoom();
+        }
+        if (window.distanceChartInstance) {
+            window.distanceChartInstance.resetZoom();
+        }
+    }
+
     function exportToCSV() {
         const table = document.querySelector('.summary-table');
         if (!table) {
-            // Reemplaza alert con un mensaje en la UI
             const resultsDiv = document.getElementById('results');
             resultsDiv.innerHTML = `<div id="error" class="mt-4 text-center text-red-500"><p id="error-message">No hay datos para exportar. Por favor, realiza un análisis primero.</p></div>`;
             return;
